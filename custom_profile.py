@@ -1,9 +1,10 @@
 from dlrm_s_pytorch import *
+from custom_profile_templates import TEMPLATES
 
 import pandas as pd
 
 
-def get_args():
+def get_args(template=None):
     import sys
     import argparse
 
@@ -89,6 +90,9 @@ def get_args():
     parser.add_argument("--lr-decay-start-step", type=int, default=0)
     parser.add_argument("--lr-num-decay-steps", type=int, default=0)
     args = parser.parse_args()
+
+    if template is not None:
+        template(args)
 
     # post-processing
     if (args.test_mini_batch_size < 0):
@@ -599,13 +603,45 @@ def draw_chart(cd, gd):
     fig.savefig('cpu_gpu_time_chart.pdf')
 
 
-def main():
-    args = get_args()
-    model = get_model(args)
-    train_data, train_ld = get_data(args)
+def draw_chart_templates(template_names, gpu_time_dicts):
+    data = {'op':[]}
+    for template in template_names:
+        data[template] = []
 
-    prof, cpu_time_dict, self_cpu_time_dict, gpu_time_dict = profile_training(args, model, train_ld)
-    draw_chart(self_cpu_time_dict, gpu_time_dict)
+    gd0 = gpu_time_dicts[0]
+    assert all(list(gd0.keys()) == list(gd.keys()) for gd in gpu_time_dicts)
+    sums = [sum(gd.values()) for gd in gpu_time_dicts]
+
+    for op in gd0.keys():
+        percs = [gd[op] / s * 100 for gd, s in zip(gpu_time_dicts, sums)]
+        if any(p < 3.0 for p in percs):
+            continue
+        data['op'].append(op)
+        for template, perc in zip(template_names, percs):
+            data[template].append(perc)
+
+    df = pd.DataFrame(data)
+    fig = df.set_index('op').T.plot(kind='bar', stacked=True).get_figure()
+    fig.savefig('chart_templates.pdf')
+
+
+def main():
+    template_names = []
+    gpu_time_dicts = []
+    for template in TEMPLATES:
+        args = get_args(template)
+
+        model = get_model(args)
+        train_data, train_ld = get_data(args)
+        prof, cpu_time_dict, self_cpu_time_dict, gpu_time_dict = profile_training(args, model, train_ld)
+
+        if args.template == 'warmup':
+            continue
+        template_names.append(args.template)
+        gpu_time_dicts.append(gpu_time_dict)
+
+    # draw_chart(self_cpu_time_dict, gpu_time_dict)
+    draw_chart_templates(template_names, gpu_time_dicts)
 
 
 if __name__ == '__main__':
